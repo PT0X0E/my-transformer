@@ -49,17 +49,47 @@ class MyTransformerEncoderLayer(nn.Module):
         self.activation = activation
         self.batch_first = batch_first
         self.norm_first = norm_first
-        self.device = device
+        self.device = device #TODO
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: (b, s, d) or (s, b, d)
         if not self.batch_first:
             x = torch.transpose(x, 0, 1)
 
+        residual = x
         # Pre-Norm
         if self.norm_first:
             x = self.layernorm1(x)
 
-        # Multihead Self Attention
+        # Multihead Attention
+        x_att = self.multi_head_attention(x)
+
+        # Add
+        x = residual + x_att # (b,s,d)
+
+        # Post-Norm
+        if not self.norm_first:
+            x = self.layernorm1(x)
+
+        residual = x
+        # Pre-Norm
+        if self.norm_first:
+            x = self.layernorm2(x)
+
+        # FFN
+        x_ffn = self.feed_forward(x)
+
+        # Add
+        x = residual + x_ffn
+
+        # Post-Norm
+        if not self.norm_first:
+            x = self.layernorm2(x)
+
+        if not self.batch_first:
+            x = torch.transpose(x, 0, 1)
+        return x
+    
+    def multi_head_attention(self, x):
         Q = self.q_proj(x)
         K = self.k_proj(x)
         V = self.v_proj(x)
@@ -86,35 +116,16 @@ class MyTransformerEncoderLayer(nn.Module):
         x_att = torch.cat(x_att, dim=-1)
         x_att = self.out_proj(x_att)
         x_att = self.dropout(x_att)
+        return x_att
 
-        # Add
-        x = x + x_att # (b,s,d)
-
-        # Post-Norm
-        if not self.norm_first:
-            x = self.layernorm1(x)
-
-        # Pre-Norm
-        if self.norm_first:
-            x = self.layernorm2(x)
-
-        # FFN
+    def feed_forward(self, x):
         x_ffn = self.ffn1(x)
         x_ffn = self.activation(x_ffn)
         x_ffn = self.dropout(x_ffn)
         x_ffn = self.ffn2(x_ffn)
         x_ffn = self.dropout(x_ffn)
+        return x_ffn
 
-        # Add
-        x = x + x_ffn
-
-        # Post-Norm
-        if not self.norm_first:
-            x = self.layernorm2(x)
-
-        if not self.batch_first:
-            x = torch.transpose(x, 0, 1)
-        return x
 
 my_impl = MyTransformerEncoderLayer(
     d_model=512,
