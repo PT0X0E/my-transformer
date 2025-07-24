@@ -30,37 +30,37 @@ class MyMultiHeadAttention(nn.Module):
 		self.dropout = nn.Dropout(dropout)
 
 	def forward(self, query, key, value, key_padding_mask, attn_mask, is_casual):
+		batch_size, seq_len, _ = query.shape
+		head_dim = self.embed_dim // self.num_head
+		if self.embed_dim % self.num_head != 0:
+			raise ValueError(f"embed_dim {self.embed_dim} should be divisible by num_heads {self.num_head}")
+
 		Q = self.q_proj(query)
 		K = self.k_proj(key)
 		V = self.v_proj(value)
-		Q = torch.chunk(Q, self.num_head, dim=-1)  # (b, s, d/h) * h
-		K = torch.chunk(K, self.num_head, dim=-1)  # (b, s, d/h) * h
-		V = torch.chunk(V, self.num_head, dim=-1)  # (b, s, d/h) * h
+		
+		Q = Q.view(batch_size, seq_len, self.num_head, head_dim).transpose(1, 2) # (b, h, s, d/h)
+		K = K.view(batch_size, seq_len, self.num_head, head_dim).transpose(1, 2) # (b, h, s, d/h)
+		V = V.view(batch_size, seq_len, self.num_head, head_dim).transpose(1, 2) # (b, h, s, d/h)
 
-		#TODO: use torch.view instead of chunk and loop
-		x_att = []
-		for n in range(self.num_head):
-			atten = torch.matmul(Q[n], # (b,s,d/h)
-								torch.transpose(K[n], -1, -2) # (b,d/h,s)
-			) # (b,s,s)
-			atten /= math.sqrt(self.embed_dim / self.num_head)
-			if key_padding_mask is not None and key_padding_mask.dtype == torch.bool: # (b, s)
-				key_padding_mask = key_padding_mask.unsqueeze(1) # (b, 1, s)
-				atten = atten.masked_fill(key_padding_mask, float('-inf'))
-			if attn_mask is not None and attn_mask.dtype == torch.bool: # (b, s, s)
-				atten = atten.masked_fill(attn_mask, float('-inf'))
-			if is_casual and self.training:
-				seq_len = atten.size(-1)
-				casual_mask = torch.triu(torch.ones(seq_len, seq_len, device=atten.device), diagonal=1).bool()
-				atten = atten.masked_fill(casual_mask, float('-inf'))
-			atten = torch.softmax(atten, dim=-1)  # -inf will be 0
-			atten = self.dropout(atten)
-			x_att.append(
-				torch.matmul(atten, # (b,s,s)
-							V[n], # (b,s,d/h)
-			)) # (b,s,d/h)
+		atten = torch.matmul(Q, K.transpose(-2, -1))  # (b, h, s, s)
+		atten /= math.sqrt(head_dim)
 
-		x_att = torch.cat(x_att, dim=-1)
+		if key_padding_mask is not None and key_padding_mask.dtype == torch.bool:
+			key_padding_mask = key_padding_mask.unsqueeze(1).unsqueeze(2)  # (b, 1, 1, s)
+			atten = atten.masked_fill(key_padding_mask, float('-inf'))
+		if attn_mask is not None and attn_mask.dtype == torch.bool:
+			atten = atten.masked_fill(attn_mask.unsqueeze(1).unsqueeze(2), float('-inf'))
+		if is_casual and self.training:
+			casual_mask = torch.triu(torch.ones(seq_len, seq_len, device=atten.device), diagonal=1).bool()
+			atten = atten.masked_fill(casual_mask, float('-inf'))
+
+		atten = F.softmax(atten, dim=-1)
+		atten = self.dropout(atten)
+
+		x_att = torch.matmul(atten, V)  # (b, h, s, d/h)
+		x_att = x_att.transpose(1, 2).contiguous().view(batch_size, seq_len, self.embed_dim) # (b, s, d)
+
 		x_att = self.out_proj(x_att)
 		x_att = self.dropout(x_att)
 		return x_att

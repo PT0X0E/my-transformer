@@ -77,6 +77,8 @@ class MyTransformerEncoderLayer(nn.Module):
 		Q = self.q_proj(x)
 		K = self.k_proj(x)
 		V = self.v_proj(x)
+
+# This implementation is slow. See MultiHeadAttention.py for a more efficient version.
 		Q = torch.chunk(Q, self.nhead, dim=-1)  # (b, s, d/h) * h
 		K = torch.chunk(K, self.nhead, dim=-1)  # (b, s, d/h) * h
 		V = torch.chunk(V, self.nhead, dim=-1)  # (b, s, d/h) * h
@@ -98,6 +100,8 @@ class MyTransformerEncoderLayer(nn.Module):
 			)) # (b,s,d/h)
 
 		x_att = torch.cat(x_att, dim=-1)
+# This implementation is slow. See MultiHeadAttention.py for a more efficient version.
+
 		x_att = self.out_proj(x_att)
 		x_att = self.dropout(x_att)
 		return x_att
