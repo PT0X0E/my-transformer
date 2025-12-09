@@ -18,18 +18,18 @@ class SimpleMHA(nn.Module):
 		self.k_cache = None
 		self.v_cache = None
 
-	def forward(self, x): # x: initial tokens (b, s, d), subsequent tokens (b, 1, d)
+	def forward(self, x): # x: initial tokens (b, s1, d), subsequent tokens (b, 1, d)
 		q = self.q_emb(x)
 		k = self.k_emb(x)
 		v = self.v_emb(x)
 
 		if self.kv_cache_en and (self.k_cache is not None and self.v_cache is not None):
-			k = torch.cat((self.k_cache, k), dim=1) # (b, total s, d)
-			v = torch.cat((self.v_cache, v), dim=1) # (b, total s, d)
+			k = torch.cat((self.k_cache, k), dim=1) # (b, s, d)
+			v = torch.cat((self.v_cache, v), dim=1) # (b, s, d)
 		self.k_cache = k
 		self.v_cache = v
 
-		att_wt = torch.matmul(q, k.transpose(-1, -2)) / torch.sqrt(torch.tensor(self.d)) # (b, s or 1, total s)
+		att_wt = torch.matmul(q, k.transpose(-1, -2)) / torch.sqrt(torch.tensor(self.d)) # (b, 1, d) * (b, d, s) => (b, 1, s), computation b*d*s, s times smaller than no kv cache
 
 		# add causual mask for initial inference, because otherwise it will be different behaviour with training (and autogressive)
 		if q.shape[1] > 1:
@@ -39,7 +39,7 @@ class SimpleMHA(nn.Module):
 		# print(att_wt)
 
 		att_wt = torch.softmax(att_wt, dim=-1)
-		x = torch.matmul(att_wt, v) # (b, s or 1, d)
+		x = torch.matmul(att_wt, v) # (b, 1, d)
 		x = self.out_emb(x)
 		return x
 
@@ -56,7 +56,7 @@ class SimpleDecoderLayer(nn.Module):
 			nn.Linear(4*d, d)
 		)
 
-	def forward(self, x): # x: initial tokens (b, s, d), subsequent tokens (b, 1, d)
+	def forward(self, x): # x: initial tokens (b, s1, d), subsequent tokens (b, 1, d)
 		residual = x
 		x = self.norm1(x)
 		x = self.mha(x) + residual
